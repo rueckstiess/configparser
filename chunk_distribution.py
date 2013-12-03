@@ -28,7 +28,7 @@ class ChunkDistribution(SortedCollection):
         SortedCollection.__init__(self, iterable=iterable, key=key)
 
         self.time = None
-
+        self.what = None
 
     def check(self, verbose=False):
         """ check that chunk distribution is complete and correct """
@@ -65,14 +65,16 @@ class ChunkDistribution(SortedCollection):
 
     def __repr__(self):
         """ print first and last 3 chunks """
+        
+        c = 5
         s = 'ChunkDistribution( [\n'
 
-        if len(self) < 6:
+        if len(self) < 2*c:
             s += ',\n'.join(['    ' + str(ch) for ch in self])
         else:
-            s += ',\n'.join(['    ' + str(ch) for ch in self[:3]])
+            s += ',\n'.join(['    ' + str(ch) for ch in self[:c]])
             s += ',\n    ...\n'
-            s += ',\n'.join(['    ' + str(ch) for ch in self[-3:]])
+            s += ',\n'.join(['    ' + str(ch) for ch in self[-c:]])
                 
         s += '\n] )'
         return s

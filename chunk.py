@@ -93,7 +93,7 @@ class Chunk(object):
         return not self._is_equal(other)
 
     def __repr__(self):
-        return 'Chunk( ns="%s", range=%s --> %s, shard_version=%s )' % (self.namespace, self.min, self.max, self.shard_version)
+        return 'Chunk( ns="%s", range=%s --> %s, shard_version=%s, shard=%s )' % (self.namespace, self.min, self.max, self.shard_version, self.shard)
 
     def all(self, fields=None):
         s =  'Chunk:'

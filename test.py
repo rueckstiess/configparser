@@ -56,3 +56,9 @@ print "> Find chunk distribution at %s" % t
 chunk_dist = cfg_parser.history.find_le(parser.parse(t))
 print "Chunk distribution found from %s, it has %i chunks" %(chunk_dist.time, len(chunk_dist))
 print chunk_dist
+
+print "\n-------------------\n"
+
+for chunk_dist in cfg_parser.history:
+	print chunk_dist.what, chunk_dist.time, chunk_dist
+
