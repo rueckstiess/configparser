@@ -22,10 +22,12 @@ MaxKey.__ge__ = lambda self, other: True
 class ChunkDistribution(SortedCollection):
     """ Holds a collection of chunks, sorted by chunk.range, which is a tuple of tuple of values. """
 
-    def __init__(self, iterable=()):
+    def __init__(self, iterable=(), key=None):
         """ constructor, sets key of SortedCollection to chunk.range, then call superclass' __init__. """
         key = lambda chunk: chunk.range
         SortedCollection.__init__(self, iterable=iterable, key=key)
+
+        self.time = None
 
 
     def check(self, verbose=False):
