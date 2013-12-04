@@ -7,13 +7,21 @@ from copy import copy, deepcopy
 
 
 class ConfigParser(object):
+    """ Config Parser offers some methods to convert a config database on a running mongod into
+        useable and queryable objects in Python. It starts with the current distribution of 
+        chunks, from the config.chunks collection, builds a ChunkDistribution from it, then 
+        uses the changelog as delta changes. It walks the changelog backwards in time, applying
+        each change to create a new ChunkDistribution. At the end, it returns a SortedCollection
+        of ChunkDistributions, sorted by time.
+    """
 
     def __init__(self, config_db):
         self.config_db = config_db
-        self.history = SortedCollection(key=lambda dist: dist.time)
-
     
-    def get_chunk_distribution(self, namespace):        
+    def get_chunk_distribution(self, namespace): 
+        """ returns a single ChunkDistribution object based on the current state of the
+            cluster given by its config.chunks collection. 
+        """       
         chunks = self.config_db['chunks'].find({'ns': namespace})
         chunk_dist = ChunkDistribution()
 
@@ -24,31 +32,64 @@ class ConfigParser(object):
         return chunk_dist          
 
 
-    def process_changelog(self, namespace):
+    def walk_distributions(self, namespace):
+        """ iterator over chunk distributions backwards in time. """
 
+        # get original chunk distribution
         chunk_dist = self.get_chunk_distribution(namespace)
-        chunk_dist.time = datetime.max
         chunk_dist.what = 'chunks'
-
-        self.history.insert(chunk_dist)
         
+        # now get changelog ( only splits and moveChunk.x )
         changelog = list( self.config_db['changelog'].find({'ns': namespace, 'what': {'$in': ['split', 'moveChunk.from', 'moveChunk.to', 'moveChunk.start', 'moveChunk.commit']}}).sort([('time', DESCENDING)]) ) 
 
         for i, chl in enumerate(changelog):
 
             # process a chunk split
             if chl['what'] == 'split':
-                new_dist = self._process_split(chl, self.history[0])
-                self.history.insert(new_dist)
+                new_dist = self._process_split(chl, chunk_dist)
+                chunk_dist.what = 'split'
 
             # process a chunk move if it wasn't aborted
             elif chl['what'] == 'moveChunk.from':
-                new_dist = self._process_move(changelog[i:], self.history[0])
+                new_dist = self._process_move(changelog[i:], chunk_dist)
                 if new_dist:
-                    self.history.insert(new_dist)
+                    chunk_dist.what = 'move'
+
+            # none of that? go to next doc, no yield
+            else:
+                continue
+
+            if new_dist:
+                # yield previous distribution
+                yield chunk_dist
+                chunk_dist = new_dist
+
+        # yield final distribution
+        chunk_dist.time = datetime.min
+        yield chunk_dist
+
+
+
+    def build_full_history(self, namespace):
+        """ Builds an initial ChunkDistribution from the config.chunks collection, then walks
+            the changelog backwards and creates a new ChunkDistribution for each step (either 
+            a split or a move). All these ChunkDistributions are inserted into a SortedCollection
+            and returned.
+        """
+
+        history = SortedCollection(key=lambda dist: dist.time)
+
+        for chunk_dist in self.walk_distributions(namespace):
+            history.insert(chunk_dist)
+
+        return history
+
 
 
     def _process_split(self, split_doc, chunk_dist):
+        """ Processes a single split event, transforming a given ChunkDistribution into a new one,
+            where the two chunks are merged back into one original (split backwards).
+        """
 
         # extract the before, left, right details
         left_doc = split_doc['details']['left']
@@ -61,8 +102,15 @@ class ConfigParser(object):
         before_split = Chunk(split_doc, 'before')
 
         # Chunk objects found in the distribution
-        left_chunk = chunk_dist.find( left_split.range )
-        right_chunk = chunk_dist.find( right_split.range )
+        try:
+            left_chunk = chunk_dist.find( left_split.range )
+        except ValueError:
+            raise ValueError("Error processing split: can't find left chunk in distribution.")
+
+        try: 
+            right_chunk = chunk_dist.find( right_split.range )
+        except ValueError:
+            raise ValueError("Error processing split: can't find right chunk in distribution.")
         
         # some sanity checks: set shards to be equal (they are not in split_doc), then compare
         left_split.shard = left_chunk.shard
@@ -71,13 +119,13 @@ class ConfigParser(object):
         # update any shard versions if they are different (retrospectively, from moved chunks)
         if left_chunk.shard_version != left_split.shard_version:
             left_chunk.shard_version = left_split.shard_version
-        if right_chunk.shard_version == right_split.shard_version:
+        if right_chunk.shard_version != right_split.shard_version:
             right_chunk.shard_version = right_split.shard_version
 
         if left_split != left_chunk:
-            raise ValueError("Error: left chunks not the same. %s <--> %s" % (left_split, left_chunk))
+            raise ValueError("Error processing split: left chunks not the same. %s <--> %s" % (left_split, left_chunk))
         if right_split != right_chunk:
-            print ValueError("Error: right chunks not the same. %s <--> %s" % (right_split, right_chunk))
+            print ValueError("Error processing split: right chunks not the same. %s <--> %s" % (right_split, right_chunk))
 
         # create a shallow copy of the original chunk distribution
         new_dist = copy(chunk_dist)
@@ -95,17 +143,20 @@ class ConfigParser(object):
         new_dist.insert(before_split)
 
         # update time of new distribution
-        new_dist.time = split_doc['time']
-        new_dist.what = 'split'
+        chunk_dist.time = split_doc['time']
+        chunk_dist.what = 'split'
 
         # another sanity check: make sure new chunk distribution is correct
         if not new_dist.check(verbose=True):
-            raise ValueError('Error: resulting chunk distribution check failed.')
+            raise ValueError('Error processing split: resulting chunk distribution check failed.')
         
         return new_dist
 
 
     def _process_move(self, changelog, chunk_dist):
+        """ Processes a single chunk move event, transforming a ChunkDistribution into a new ChunkDistribution,
+            where the chunk that is moved is replaced by a chunk with same range, but the previous shard.
+        """
 
         docs = {}
 
@@ -165,8 +216,9 @@ class ConfigParser(object):
         # delete old chunk and insert new chunk
         new_dist.remove(chunk)
         new_dist.insert(new_chunk)
-        new_dist.time = docs['commit']['time']
-        new_dist.what = 'move'
+        
+        chunk_dist.time = docs['commit']['time']
+        chunk_dist.what = 'move'
 
         return new_dist
 

@@ -2,8 +2,12 @@ class Chunk(object):
     """ represents a chunk, contains all relevant information. """
 
     def __init__(self, doc=None, which=None):
-        """ constructor for Chunk, extract info from doc if specified. """
+        """ constructor for Chunk, extract info from doc if specified. The doc can either be a document from 
+            the chunks collection, or a split event from the changelog collection. Both can be used to instantiate
+            a Chunk. Split needs to specify `which`, either 'before', 'left' or 'right'.
+        """
 
+        # these fields are used when comparing two chunks for equality
         self.equality_fields = ['shard_version', 'shardkey_fields', 'range', 'shard', 'namespace']
         self.parent = []
         self.children = []
@@ -83,19 +87,26 @@ class Chunk(object):
 
 
     def _is_equal(self, other, equality_fields=None):
+        """ comparison function for equality. If equality_fields is given here, those are used. 
+            Otherwise the global self.equality_fields are used. 
+        """
         efields = equality_fields or self.equality_fields
         return all( getattr(self, f) == getattr(other, f) for f in efields )
 
     def __eq__(self, other):
+        """ self == other """
         return self._is_equal(other)
 
     def __ne__(self, other):
+        """ self != other """
         return not self._is_equal(other)
 
     def __repr__(self):
-        return 'Chunk( ns="%s", range=%s --> %s, shard_version=%s, shard=%s )' % (self.namespace, self.min, self.max, self.shard_version, self.shard)
+        """ representation of a chunk as string. """
+        return 'Chunk( ns=%s, range=%s-->%s, shard_version=%s, shard=%s )' % (self.namespace, self.min, self.max, self.shard_version, self.shard)
 
     def all(self, fields=None):
+        """ Useful to print all fields of a chunk. Usage:  print chunk.all() """
         s =  'Chunk:'
         fields = fields or self.equality_fields
         for f in fields:
@@ -106,6 +117,8 @@ class Chunk(object):
 
 if __name__ == '__main__':
 
+    # Example on how to create a chunk from a "chunks" document and from a changelog "split" document
+    
     from bson.min_key import MinKey
     from bson.max_key import MaxKey
     from bson import ObjectId, Timestamp

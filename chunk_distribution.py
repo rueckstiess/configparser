@@ -20,7 +20,8 @@ MaxKey.__ge__ = lambda self, other: True
 
 
 class ChunkDistribution(SortedCollection):
-    """ Holds a collection of chunks, sorted by chunk.range, which is a tuple of tuple of values. """
+    """ Holds a collection of chunks, sorted by chunk.range, which is a tuple of tuple of values. This class is 
+        a SortedCollection with some extras, like validation (check()) and equality checks. """
 
     def __init__(self, iterable=(), key=None):
         """ constructor, sets key of SortedCollection to chunk.range, then call superclass' __init__. """
@@ -31,7 +32,9 @@ class ChunkDistribution(SortedCollection):
         self.what = None
 
     def check(self, verbose=False):
-        """ check that chunk distribution is complete and correct """
+        """ check that chunk distribution is complete and correct. Needs to go from MinKey to MaxKey without gaps and overlaps, 
+            and all be of the same namespace. 
+        """
         okay = True
 
         # check that range starts with MinKey on all fields
@@ -63,8 +66,16 @@ class ChunkDistribution(SortedCollection):
         return okay
 
 
+    def __eq__(self, other):
+        """ One chunk distribution is equal to another, if all chunks match. """
+        return all( s == o for s,o in zip(self, other) )
+
+    def __ne__(self, other):
+        """ inequality is the opposite of equality. """
+        return not self == other
+
     def __repr__(self):
-        """ print first and last 3 chunks """
+        """ representation prints first and last 3 chunks """
         
         c = 5
         s = 'ChunkDistribution( [\n'
@@ -73,7 +84,7 @@ class ChunkDistribution(SortedCollection):
             s += ',\n'.join(['    ' + str(ch) for ch in self])
         else:
             s += ',\n'.join(['    ' + str(ch) for ch in self[:c]])
-            s += ',\n    ...\n'
+            s += ',\n    ... skipping %i chunks ...\n' % (len(self)-2*c)
             s += ',\n'.join(['    ' + str(ch) for ch in self[-c:]])
                 
         s += '\n] )'

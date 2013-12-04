@@ -6,59 +6,46 @@ from bson import ObjectId, Timestamp
 
 from chunk import Chunk
 from chunk_distribution import ChunkDistribution
-
 from config_parser import ConfigParser
 
 from copy import copy, deepcopy
-
 from dateutil import parser
 
-c1 = Chunk({u'_id': u'mydb.mycoll_id_MinKey', u'min': {u'_id': MinKey()}, u'max': {u'_id': 0}, u'ns': u'mydb.mycoll', u'shard': u'shard0000', u'lastmodEpoch': ObjectId('52941cc0d0120f1f83928407'), u'lastmod': Timestamp(2, 1)})
-c2 = Chunk({u'_id': u'mydb.mycoll_id_0', u'min': {u'_id': 0}, u'max': {u'_id': MaxKey()}, u'ns': u'mydb.mycoll', u'shard': u'shard0001', u'lastmodEpoch': ObjectId('52941cc0d0120f1f83928407'), u'lastmod': Timestamp(2, 0)})
+### CS-9785 config servers as example, although a bit boring because they don't have many splits
 
-chunk_dist = ChunkDistribution()
-
-chunk_dist.insert(c1)
-chunk_dist.insert(c2)
-
-print chunk_dist
-print "check:", chunk_dist.check(verbose=True)
-
-print "\n-------------------\n"
-
+# create a MongoClient on the correct port
 mc = MongoClient(port=30000)
+
+# specify the config database ( here I imported all 3 config servers to 1 mongod, hence config[1,2,3] )
 config_db = mc['config1']
 
+# create config parser object with the config_db as parameter
 cfg_parser = ConfigParser(config_db)
 
 # get all collections
 collections = [c['_id'] for c in config_db['collections'].find({'dropped': {'$ne': True}})]
 
+# validate that for each collection, the corresponding chunks form a distribution from 
+# MinKey to MaxKey without gaps or overlaps.
 for namespace in collections:
     print namespace, 
     chunk_dist = cfg_parser.get_chunk_distribution(namespace)
     if chunk_dist.check(verbose=True):
         print '  ok'
 
-print "\n-------------------\n"
+# pick first collection (arbitrary, change to specific namespace here)
+namespace = collections[0]
 
-collection = 'blab_store_timed.posts20131125T160000'
-cfg_parser.process_changelog(collection)
+# walk distributions backwards from chunks collection, each step applying one changelog event (move / split)
+for chunk_dist in cfg_parser.walk_distributions(namespace):
+    print chunk_dist.what, chunk_dist.time, chunk_dist
 
-for history in cfg_parser.history:
-	print history.time, len(history)
+# now build full history of ChunkDistribution objects over time (slow, expensive)
+history = cfg_parser.build_full_history(namespace)
 
-print "\n-------------------\n"
-
-t = "Nov 25 2013, 16:00:30"
-print "> Find chunk distribution at %s" % t
-
-chunk_dist = cfg_parser.history.find_le(parser.parse(t))
-print "Chunk distribution found from %s, it has %i chunks" %(chunk_dist.time, len(chunk_dist))
+# find the distribution as it was at a specific date and time, use SortedCollection's "find less than or equal": find_le()
+t = "2013-11-24 16:13"
+chunk_dist = history.find_le(parser.parse(t))
+print "last change was a %s at %s" % (chunk_dist.what, chunk_dist.time)
 print chunk_dist
-
-print "\n-------------------\n"
-
-for chunk_dist in cfg_parser.history:
-	print chunk_dist.what, chunk_dist.time, chunk_dist
 
