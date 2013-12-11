@@ -15,8 +15,8 @@ class Chunk(object):
         if doc:
             # identify if split or chunk document
             if 'server' in doc:
-                if which not in ['before', 'left', 'right']:
-                    raise ValueError("can't parse document, `which` not specified. must be 'before', 'left' or 'right'.")
+                if which not in ['before', 'left', 'right', 'chunk']:
+                    raise ValueError("can't parse document, `which` not specified. must be 'before', 'left', 'right' or 'chunk'.")
                 self._from_split(doc, which)
             elif 'shard' in doc:
                 self._from_chunk(doc)
@@ -61,7 +61,7 @@ class Chunk(object):
     
     def _from_split(self, split_doc, which):
         """ extracts information from a split document (from config.changelog). 
-            specify `which` as any of 'before', 'left', 'right'. 
+            specify `which` as any of 'before', 'left', 'right', 'chunk' (for multi-splits). 
         """
 
         self._source_doc = split_doc

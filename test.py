@@ -14,10 +14,10 @@ from dateutil import parser
 ### CS-9785 config servers as example, although a bit boring because they don't have many splits
 
 # create a MongoClient on the correct port
-mc = MongoClient(port=30000)
+mc = MongoClient(port=27023)
 
 # specify the config database ( here I imported all 3 config servers to 1 mongod, hence config[1,2,3] )
-config_db = mc['config1']
+config_db = mc['config']
 
 # create config parser object with the config_db as parameter
 cfg_parser = ConfigParser(config_db)
@@ -37,15 +37,15 @@ for namespace in collections:
 namespace = collections[0]
 
 # walk distributions backwards from chunks collection, each step applying one changelog event (move / split)
-for chunk_dist in cfg_parser.walk_distributions(namespace):
-    print chunk_dist.what, chunk_dist.time, chunk_dist
+for chunk_dist in list(cfg_parser.walk_distributions(namespace)):
+    print chunk_dist.what, chunk_dist.time, len(chunk_dist)
 
 # now build full history of ChunkDistribution objects over time (slow, expensive)
 history = cfg_parser.build_full_history(namespace)
 
 # find the distribution as it was at a specific date and time, use SortedCollection's "find less than or equal": find_le()
-t = "2013-11-24 16:13"
-chunk_dist = history.find_le(parser.parse(t))
-print "last change was a %s at %s" % (chunk_dist.what, chunk_dist.time)
-print chunk_dist
+# t = "2013-11-24 16:13"
+# chunk_dist = history.find_le(parser.parse(t))
+# print "last change was a %s at %s" % (chunk_dist.what, chunk_dist.time)
+# print chunk_dist
 

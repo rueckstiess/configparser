@@ -5,6 +5,7 @@ from pymongo import DESCENDING
 from datetime import datetime
 from copy import copy, deepcopy
 
+from pprint import pprint
 
 class ConfigParser(object):
     """ Config Parser offers some methods to convert a config database on a running mongod into
@@ -17,7 +18,9 @@ class ConfigParser(object):
 
     def __init__(self, config_db):
         self.config_db = config_db
+        self.processed_multisplits = set()
     
+
     def get_chunk_distribution(self, namespace): 
         """ returns a single ChunkDistribution object based on the current state of the
             cluster given by its config.chunks collection. 
@@ -37,10 +40,10 @@ class ConfigParser(object):
 
         # get original chunk distribution
         chunk_dist = self.get_chunk_distribution(namespace)
-        chunk_dist.what = 'chunks'
+        self.processed_multisplits = set()
         
         # now get changelog ( only splits and moveChunk.x )
-        changelog = list( self.config_db['changelog'].find({'ns': namespace, 'what': {'$in': ['split', 'moveChunk.from', 'moveChunk.to', 'moveChunk.start', 'moveChunk.commit']}}).sort([('time', DESCENDING)]) ) 
+        changelog = list( self.config_db['changelog'].find({'ns': namespace, 'what': {'$in': ['multi-split', 'split', 'moveChunk.from', 'moveChunk.to', 'moveChunk.start', 'moveChunk.commit']}}).sort([('time', DESCENDING)]) ) 
 
         for i, chl in enumerate(changelog):
 
@@ -49,7 +52,13 @@ class ConfigParser(object):
                 new_dist = self._process_split(chl, chunk_dist)
                 chunk_dist.what = 'split'
 
-            # process a chunk move if it wasn't aborted
+            # process a chunk multi-split
+            elif chl['what'] == 'multi-split':
+                new_dist = self._process_multi_split(changelog[i:], chunk_dist)
+                if new_dist:
+                    chunk_dist.what = 'multi-split'
+
+            # process a chunk move
             elif chl['what'] == 'moveChunk.from':
                 new_dist = self._process_move(changelog[i:], chunk_dist)
                 if new_dist:
@@ -66,6 +75,7 @@ class ConfigParser(object):
 
         # yield final distribution
         chunk_dist.time = datetime.min
+        chunk_dist.what = 'chunks'
         yield chunk_dist
 
 
@@ -112,15 +122,13 @@ class ConfigParser(object):
         except ValueError:
             raise ValueError("Error processing split: can't find right chunk in distribution.")
         
-        # some sanity checks: set shards to be equal (they are not in split_doc), then compare
+        # set shards to be equal (they are not in split_doc), then compare
         left_split.shard = left_chunk.shard
         right_split.shard = right_chunk.shard
 
         # update any shard versions if they are different (retrospectively, from moved chunks)
-        if left_chunk.shard_version != left_split.shard_version:
-            left_chunk.shard_version = left_split.shard_version
-        if right_chunk.shard_version != right_split.shard_version:
-            right_chunk.shard_version = right_split.shard_version
+        left_chunk.shard_version = left_split.shard_version
+        right_chunk.shard_version = right_split.shard_version
 
         if left_split != left_chunk:
             raise ValueError("Error processing split: left chunks not the same. %s <--> %s" % (left_split, left_chunk))
@@ -149,6 +157,73 @@ class ConfigParser(object):
         # another sanity check: make sure new chunk distribution is correct
         if not new_dist.check(verbose=True):
             raise ValueError('Error processing split: resulting chunk distribution check failed.')
+        
+        return new_dist
+
+
+    def _process_multi_split(self, changelog, chunk_dist):
+        """ Processes a multi-split event, transforming a given ChunkDistribution into a new one,
+            where all the children chunks are merged back into one original (split backwards).
+        """
+        # check if this multi-split has already been processed (only process first one for each shard version)
+        split_doc = changelog[0]
+        lastmod = (split_doc['details']['before']['lastmod'].time, split_doc['details']['before']['lastmod'].inc)
+
+        if lastmod in self.processed_multisplits:
+            return False
+        else:
+            self.processed_multisplits.add(lastmod)
+
+        # find all documents in the changelog belonging to this multi-split
+        multi_split_docs = filter( lambda chl: chl['what'] == 'multi-split' and
+                                               chl['details']['before']['lastmod'] == split_doc['details']['before']['lastmod'], changelog) 
+
+        # "before" doc and its chunk
+        before_doc = split_doc['details']['before']
+        before_split = Chunk(split_doc, 'before')
+
+        # Chunk objects found in the distribution
+        chunks = []
+        for doc in multi_split_docs:
+            split = Chunk(doc, 'chunk')
+            try:
+                chunk = chunk_dist.find( split.range )
+            except ValueError:
+                raise ValueError("Error processing multi-split: can't find a chunk in distribution.")
+
+            # set shards to be equal (they are not in split_doc), then compare
+            split.shard = chunk.shard
+
+            # update shard versions in chunks
+            chunk.shard_version = split.shard_version
+
+            if split != chunk:
+                raise ValueError("Error processing multi-split: chunks not the same. %s <--> %s" % (split, chunk))
+
+            chunks.append(chunk)
+
+        # create a shallow copy of the original chunk distribution
+        new_dist = copy(chunk_dist)
+
+        # now remove all chunks and insert a new one
+        for chunk in chunks:
+            new_dist.remove(chunk)
+
+        # link before chunk to all children chunks
+        before_split.shard = chunks[0].shard
+        for c, chunk in enumerate(chunks):
+            chunks[c].parent = before_split
+        before_split.children = chunks
+
+        new_dist.insert(before_split)
+
+        # update time of new distribution
+        chunk_dist.time = split_doc['time']
+        chunk_dist.what = 'multi-split'
+
+        # another sanity check: make sure new chunk distribution is correct
+        if not new_dist.check(verbose=True):
+            raise ValueError('Error processing multi-split: resulting chunk distribution check failed.')
         
         return new_dist
 
