@@ -16,12 +16,16 @@ from itertools import izip_longest
 import pprint
 import argparse
 import re
+import time
 
 from mtools.util.cmdlinetool import BaseCmdLineTool
 
 
 def all_equal(l):
     return all( it == l[0] for it in l )
+
+def argmax(l):
+    return max(enumerate(l), key=itemgetter(1))[0]
 
 
 class MConfCheckTool(BaseCmdLineTool):
@@ -44,6 +48,7 @@ class MConfCheckTool(BaseCmdLineTool):
         matches = [ regex.match(uri) for uri in self.args['config'] ]
 
         # verify that all config URIs are parsed correctly and contain a database
+        # TODO check for empty config dbs
         if not all(matches) or not all(m.groupdict()['database'] for m in matches):
             raise SystemExit('Unable to parse config server URIs, please check syntax: mongodb://[username:password@]host[:port]/database')
 
@@ -158,38 +163,60 @@ class MConfCheckTool(BaseCmdLineTool):
         config_parsers = [ ConfigParser(db) for db in self.config_dbs ]
         shorturi_len = max( len(puri['short_uri']) for puri in self.parsed_uris )
 
+
         for collection in self.all_collections:
+            print collection, '\n'
             chunk_dists = [ parser.get_chunk_distribution(collection) for parser in config_parsers ]
+            diff_found = False
 
             # check if the chunk distributions disagree on the chunks collection
             if not all_equal( chunk_dists ):
+                diff_found = True
                 chunk_len = len( str(dict(zip(chunk_dists[0][0].shardkey_fields, chunk_dists[0][0].max))) )
                 shorturi_len = max(shorturi_len, chunk_len)
 
-                print collection, '\n'
                 print '    ! chunks differ',
                 print '    ' + '    '.join( puri['short_uri'].ljust(shorturi_len) for puri in self.parsed_uris )
                 print
             
-
                 # TODO: prints all chunk differences but doesn't align them anymore, once a difference is found
                 # all following chunks will also differ. needs to align them again.
                 
-                for chunks in izip_longest(*chunk_dists, fillvalue=Chunk()):
-                    if all_equal(chunks):
-                        print ''.ljust(23),
-                    else:
-                        print 'diff >'.center(23),
+                # for chunks in izip_longest(*chunk_dists, fillvalue=Chunk()):
+                #     if not all_equal(chunks):
+                #         print 'first diff >'.center(23),
 
-                    for ch in chunks:
-                        if ch.min:
-                            print str(dict(zip(ch.shardkey_fields, ch.min))).ljust(chunk_len) + '   ',
-                        else:
-                            print ''.ljust(chunk_len) + '   ',
-                    print
+                #         for ch in chunks:
+                #             if ch.min:
+                #                 print str(dict(zip(ch.shardkey_fields, ch.min))).ljust(chunk_len) + '   ',
+                #             else:
+                #                 print ''.ljust(chunk_len) + '   ',
+                #         print
+                #         break
 
 
-            
+            if diff_found:
+                # now go backwards in time to find a point where all chunk distributions were the same
+                chunk_dist_generators = [ parser.walk_distributions(collection) for parser in config_parsers ]
+                
+                # get first element of each generator
+                current_chunk_dists = [ generator.next() for generator in chunk_dist_generators ]
+
+                while not all_equal( current_chunk_dists ):
+                    # find chunk distribution with highest chunk version
+                    highest_dist_index = argmax( [ dist.max_shard_version() if isinstance(dist, ChunkDistribution) else (-1, -1) for dist in current_chunk_dists ] )
+
+                    # let that generator generate the next chunk distribution and replace in current dists
+                    try:
+                        current_chunk_dists[ highest_dist_index ] = chunk_dist_generators[ highest_dist_index ].next()
+                    except StopIteration:
+                        current_chunk_dists[ highest_dist_index ] = None
+
+
+                if all_equal( current_chunk_dists ) and current_chunk_dists[0] != None:
+                    print "    metadata was identical last on %s" % current_chunk_dists[ highest_dist_index ].time
+                    # TODO: print more info about when they were all equal etc.
+                    return 
 
 
 

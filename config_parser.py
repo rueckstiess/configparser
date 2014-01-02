@@ -42,40 +42,36 @@ class ConfigParser(object):
         chunk_dist = self.get_chunk_distribution(namespace)
         self.processed_multisplits = set()
         
-        # now get changelog ( only splits and moveChunk.x )
+        # now get changelog ( only splits and moveChunk.* )
         changelog = list( self.config_db['changelog'].find({'ns': namespace, 'what': {'$in': ['multi-split', 'split', 'moveChunk.from', 'moveChunk.to', 'moveChunk.start', 'moveChunk.commit']}}).sort([('time', DESCENDING)]) ) 
 
         for i, chl in enumerate(changelog):
-
             # process a chunk split
             if chl['what'] == 'split':
                 new_dist = self._process_split(chl, chunk_dist)
-                chunk_dist.what = 'split'
 
             # process a chunk multi-split
             elif chl['what'] == 'multi-split':
                 new_dist = self._process_multi_split(changelog[i:], chunk_dist)
-                if new_dist:
-                    chunk_dist.what = 'multi-split'
 
             # process a chunk move
             elif chl['what'] == 'moveChunk.from':
                 new_dist = self._process_move(changelog[i:], chunk_dist)
-                if new_dist:
-                    chunk_dist.what = 'move'
 
             # none of that? go to next doc, no yield
             else:
                 continue
 
             if new_dist:
+                # attach changelog entry to chunk distribution
+                chunk_dist.applied_change = chl
+
                 # yield previous distribution
                 yield chunk_dist
                 chunk_dist = new_dist
 
         # yield final distribution
         chunk_dist.time = datetime.min
-        chunk_dist.what = 'chunks'
         yield chunk_dist
 
 

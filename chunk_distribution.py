@@ -30,7 +30,7 @@ class ChunkDistribution(SortedCollection):
         SortedCollection.__init__(self, iterable=iterable, key=key)
 
         self.time = None
-        self.what = None
+        self.applied_change = None
 
     def check(self, verbose=False):
         """ check that chunk distribution is complete and correct. Needs to go from MinKey to MaxKey without gaps and overlaps, 
@@ -72,9 +72,13 @@ class ChunkDistribution(SortedCollection):
         return ret, msgs
 
 
+    def max_shard_version(self):
+        return max(chunk.shard_version for chunk in self)
+        
+
     def __eq__(self, other):
-        """ One chunk distribution is equal to another, if all chunks match. """
-        return all( s == o for s,o in zip(self, other) )
+        """ One chunk distribution is "equal" to another, if all chunks match on range, shard, namespace """
+        return isinstance(other, ChunkDistribution) and all( s._is_equal(o, equality_fields=['range', 'shard', 'namespace'] ) for s,o in zip(self, other) )
 
     def __ne__(self, other):
         """ inequality is the opposite of equality. """
