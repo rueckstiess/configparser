@@ -11,8 +11,6 @@ from config_parser import ConfigParser
 from copy import copy, deepcopy
 from dateutil import parser
 
-### CS-9785 config servers as example, although a bit boring because they don't have many splits
-
 # create a MongoClient on the correct port
 mc = MongoClient(port=27017)
 
@@ -34,14 +32,15 @@ for namespace in collections:
         print '  ok'
 
 # pick first collection (arbitrary, change to specific namespace here)
-namespace = "order_history.OrdersAudit"
+namespace = "attribute.attribute"
 
 # walk distributions backwards from chunks collection, each step applying one changelog event (move / split)
 for chunk_dist in cfg_parser.walk_distributions(namespace):
-    print chunk_dist.what, chunk_dist.time, len(chunk_dist), chunk_dist.max_shard_version()
+    print chunk_dist.applied_change['what'] if chunk_dist.applied_change else '-', chunk_dist.time, len(chunk_dist), chunk_dist.max_shard_version()
 
 # now build full history of ChunkDistribution objects over time (slow, expensive)
-# history = cfg_parser.build_full_history(namespace)
+history = cfg_parser.build_full_history(namespace)
+print history
 
 # find the distribution as it was at a specific date and time, use SortedCollection's "find less than or equal": find_le()
 # t = "2013-11-24 16:13"
