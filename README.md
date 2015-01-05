@@ -1,4 +1,8 @@
 configparser
 ============
 
-MongoDB config db parser
+MongoDB config db parsing tools. Work in Progress.
+
+Check out `test.py` for some examples. 
+
+
